@@ -65,7 +65,19 @@ data PerPeerHeader = PerPeerHeader {
                                    , pphTimeStampSecs :: Word32
                                    , pphTimeStampMicroSecs :: Word32
                                    , vFlag, lFlag, aFlag :: Bool
-                                   } deriving Show
+                                   } -- deriving Show
+
+instance Show PerPeerHeader where
+    show PerPeerHeader{..} = "PerPeerHeader { pphAddress = " ++ show pphAddress
+                             ++ ", pphAS = " ++ show pphAS
+                             ++ ", pphBGPID = " ++ show pphBGPID 
+                             ++ ", pphTimeStampSecs = " ++ show pphTimeStampSecs
+                             ++ ", flags = "
+                             ++ if vFlag then "V" else "v"
+                             ++ if lFlag then "L" else "l"
+                             ++ if aFlag then "A" else "a"
+                             ++ "}"
+
 getPerPeerHeader = do
     pphType <- anyWord8
     pphFlags <- anyWord8
