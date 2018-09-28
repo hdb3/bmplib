@@ -8,6 +8,7 @@ import Data.Binary.Put
 import Data.Binary.Get
 import Data.Monoid((<>))
 import Control.Monad(when,unless)
+import Control.Applicative((<|>))
 import Data.Attoparsec.ByteString -- from package attoparsec
 import qualified Data.Attoparsec.ByteString as DAB
 import Data.Attoparsec.Binary -- from package attoparsec-binary
@@ -53,6 +54,46 @@ import Data.Attoparsec.Binary -- from package attoparsec-binary
 data BMPMsg = BMPRouteMonitoring | BMPPeerDown | BMPStatsReport | BMPPeerUP | BMPInitiation | BMPTermination | BMPRouteMirroring deriving (Read,Show,Eq)
 
 
+atto p s = ( p' <|> return Nothing ) <?> s where
+    p' = do tmp <- p
+            return (Just tmp)
+     
+bmpMessageParser :: Parser (Maybe BMPMsg)
+bmpMessageParser = atto bmpMessageParser' "BMP payload parser"
+-- bmpMessageParser = ( bmpMessageParser' <|> return Nothing ) <?> "BMP wire format parser"
+
+bmpMessageParser' :: Parser BMPMsg
+bmpMessageParser' = do
+    msgType <- anyWord8
+    when (msgType > 6 ) ( fail "invalid message type")
+    case msgType of 
+        0 -> return BMPRouteMonitoring
+        1 -> return BMPPeerDown
+        2 -> return BMPStatsReport
+        3 -> return BMPPeerUP
+        4 -> return BMPInitiation
+        5 -> return BMPTermination
+        6 -> return BMPRouteMirroring
+
+bmpParser :: Parser (Maybe BMPMsg)
+bmpParser = ( do msg <- bsParser
+                 return $ maybeResult $ parse bmpMessageParser' msg
+            ) <|> return Nothing
+
+
+--bmpParser :: Parser (Maybe BMPMsg)
+--bmpParser = do
+    --msg <- bsParser
+    --return $ maybeResult $ parse bmpMessageParser' msg
+
+bsParser :: Parser BS.ByteString
+bsParser = do
+    word8 0x03
+    msgLen <- anyWord32be
+    when (msgLen < 5 || msgLen > 0xffff) ( fail "invalid message length")
+    DAB.take (fromIntegral msgLen - 5)
+    -- bs <- DAB.take (fromIntegral msgLen - 5)
+    -- return bs
 {-
 4.  BMP Message Format
 
@@ -92,6 +133,8 @@ data BMPMsg = BMPRouteMonitoring | BMPPeerDown | BMPStatsReport | BMPPeerUP | BM
       *  Type = 5: Termination Message
       *  Type = 6: Route Mirroring Message
 -}
+
+{-
 data BMPMessageRaw = BMPMessageRaw { msgType :: Word8 , payload :: HexByteString } deriving Show
 instance Binary BMPMessageRaw where
     get = label "BMPMessageRaw" $ do
@@ -118,17 +161,31 @@ getHexByteString n = do bs <- getByteString n
 instance Binary HexByteString where
     get = undefined
     put (HexByteString bs) = putByteString bs
+-}
 
 -- AttoParsec parsers for IOStream adapters
 
---rawBMPFlowParser :: Parser [BMPMessageRaw]
---rawBMPFlowParser = many1 rawBMPMessageParser
+newtype BMPMessageRaw = BMPMessageRaw BS.ByteString
+extract (BMPMessageRaw bs) = bs
+
+instance Binary BMPMessageRaw where
+    get = label "BMPMessageRaw" $ do
+        version <- getWord8
+        unless (version == 0x03) (fail $ "BMPMessageRaw: incorrect version - expected 3 got " ++ show version) -- version hardcoded
+        msgLength <- getWord32be             
+        payload <- getByteString (fromIntegral msgLength -5)
+        return $ BMPMessageRaw payload
+    put (BMPMessageRaw payload) = putWord8 0x03 <> putWord32be (fromIntegral $ 5 + BS.length payload) <> put payload 
+
 rawBMPMessageParser :: Parser (Maybe BMPMessageRaw)
-rawBMPMessageParser = do
+rawBMPMessageParser = atto rawBMPMessageParser' "BMP wire format parser"
+-- rawBMPMessageParser = ( rawBMPMessageParser' <|> return Nothing ) <?> "BMP wire format parser"
+
+rawBMPMessageParser' :: Parser BMPMessageRaw
+rawBMPMessageParser' = do
+-- TODO cal back to bsParse instead
     word8 0x03
     msgLen <- anyWord32be
-    msgType <- anyWord8
-    when (msgType > 6) ( fail "invalid message type")
-    payload' <- DAB.take (fromIntegral msgLen - 6)
-    let payload = HexByteString payload'
-    return $ Just BMPMessageRaw{..}
+    when (msgLen < 5 || msgLen > 0xffff) ( fail "invalid message length")
+    payload <- DAB.take (fromIntegral msgLen - 5)
+    return $ BMPMessageRaw payload
