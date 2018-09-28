@@ -53,10 +53,9 @@ import Data.Attoparsec.Binary -- from package attoparsec-binary
       Protocol Data Units (PDUs)
 -}
 
-data BMPMsg = BMPRouteMonitoring PerPeerHeader | BMPPeerDown | BMPStatsReport | BMPPeerUP | BMPInitiation PerPeerHeader | BMPTermination | BMPRouteMirroring deriving Show
+data BMPMsg = BMPGenericNoPerPeerHeader HexByteString | BMPGeneric PerPeerHeader HexByteString | BMPRouteMonitoring PerPeerHeader | BMPPeerDown | BMPStatsReport | BMPPeerUP | BMPInitiation [TLV] | BMPTermination | BMPRouteMirroring deriving Show
 
-data PerPeerHeader = PerPeerHeader {
-                                     pphType :: Word8
+data PerPeerHeader = PerPeerHeader { pphType :: Word8
                                    , pphFlags :: Word8
                                    , pphDistinguisher :: BS.ByteString
                                    , pphAddress :: IP
@@ -66,7 +65,19 @@ data PerPeerHeader = PerPeerHeader {
                                    , pphTimeStampMicroSecs :: Word32
                                    , vFlag, lFlag, aFlag :: Bool
                                    } -- deriving Show
+data TLV = TLV { tlvType :: Word16
+               , tlvBody :: BS.ByteString
+               }
+getTLV = do
+    tlvType<- anyWord16be
+    tlvLength <- anyWord16be
+    tlvBody  <- DAB.take (fromIntegral tlvLength)
+    return TLV {..}
 
+instance Show TLV where
+    show TLV{..} = "TLV { type = " ++ show tlvType ++ ", body = " ++ toHex tlvBody ++ " }"
+
+ 
 instance Show PerPeerHeader where
     show PerPeerHeader{..} = "PerPeerHeader { pphAddress = " ++ show pphAddress
                              ++ ", pphAS = " ++ show pphAS
@@ -106,27 +117,51 @@ bmpMessageParser' = do
     msgType <- anyWord8
     when (msgType > 6 ) ( fail "invalid message type")
     case msgType of 
-        0 -> getBMPRouteMonitoring
+        0 -> getBMPGeneric
+        -- 0 -> getBMPRouteMonitoring
         1 -> return BMPPeerDown
         2 -> return BMPStatsReport
         3 -> return BMPPeerUP
-        4 -> getBMPInitiation
+        4 -> getBMPGenericNoPerPeerHeader
+        --- 4 -> getBMPInitiation
         5 -> return BMPTermination
         6 -> return BMPRouteMirroring
+
+getBMPGenericNoPerPeerHeader = do
+    -- bs <- DAB.take 4
+    bs <- takeByteString
+    return $ BMPGenericNoPerPeerHeader (HexByteString bs)
+    -- return $ BMPGeneric perPeerHeader (HexByteString BS.empty)
+
+getBMPGeneric = do
+    perPeerHeader <- getPerPeerHeader
+    bs <- DAB.take 4
+    -- bs <- takeByteString
+    return $ BMPGeneric perPeerHeader (HexByteString bs)
+    -- return $ BMPGeneric perPeerHeader (HexByteString BS.empty)
 
 getBMPRouteMonitoring = do
     perPeerHeader <- getPerPeerHeader
     return $ BMPRouteMonitoring perPeerHeader
 
 getBMPInitiation = do
-    perPeerHeader <- getPerPeerHeader
-    return $ BMPInitiation perPeerHeader
+    tlv1 <- getTLV
+    tlv2 <- getTLV
+    -- tlv3 <- option tlv2 getTLV
+    return $ BMPInitiation [tlv1,tlv2]
+
+    -- tlvs <- many1 (try getTLV)
+    -- return $ BMPInitiation tlvs
 
 bmpParser :: Parser (Maybe BMPMsg)
 bmpParser = ( do msg <- bsParser
-                 return $ maybeResult $ parse bmpMessageParser' msg
+                 -- return $ maybeResult $ parse' bmpMessageParser' msg
+                 return $ parse' bmpMessageParser' msg
             ) <|> return Nothing
-
+    where
+        -- parse'  = parse
+        parse' p b= rightToMaybe $ parseOnly p b
+        rightToMaybe = either (const Nothing) Just
 
 bsParser :: Parser BS.ByteString
 bsParser = do
@@ -187,11 +222,12 @@ instance Binary BMPMessageRaw where
         return BMPMessageRaw {..}
     put BMPMessageRaw {..} = putWord8 0x03 <> putWord32be (fromIntegral $ 6 + hbLength payload) <> putWord8 msgType <> put payload 
 
+-}
 -- HexByteString exists in order to implement a useful instance of 'show'
 newtype HexByteString = HexByteString BS.ByteString deriving (Eq,Read)
 instance Show HexByteString where
     show (HexByteString bs) = let toHex = Data.ByteString.Char8.unpack . Data.ByteString.Base16.encode
-                              in toHex bs
+                              in "[" ++ toHex bs ++ "]"
 
 hbLength (HexByteString hb) = BS.length hb
 
@@ -202,12 +238,14 @@ getHexByteString n = do bs <- getByteString n
 instance Binary HexByteString where
     get = undefined
     put (HexByteString bs) = putByteString bs
--}
 
 -- AttoParsec parsers for IOStream adapters
 
 newtype BMPMessageRaw = BMPMessageRaw BS.ByteString
 extract (BMPMessageRaw bs) = bs
+
+instance Show BMPMessageRaw where
+    show (BMPMessageRaw bs) = toHex bs
 
 instance Binary BMPMessageRaw where
     get = label "BMPMessageRaw" $ do
@@ -233,6 +271,8 @@ rawBMPMessageParser' = do
 
 
 -- copied from zserv - maybe need some common library for this stuff?
+
+toHex = Data.ByteString.Char8.unpack . Data.ByteString.Base16.encode
 
 zIPv4 = zIPv4Parser
 zIPv4Parser :: Parser IPv4
