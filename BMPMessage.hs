@@ -3,6 +3,8 @@ module BMPMessage where
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8
 import qualified Data.ByteString.Base16
+import Data.IP
+import Data.Bits
 import Data.Binary
 import Data.Binary.Put
 import Data.Binary.Get
@@ -51,7 +53,32 @@ import Data.Attoparsec.Binary -- from package attoparsec-binary
       Protocol Data Units (PDUs)
 -}
 
-data BMPMsg = BMPRouteMonitoring | BMPPeerDown | BMPStatsReport | BMPPeerUP | BMPInitiation | BMPTermination | BMPRouteMirroring deriving (Read,Show,Eq)
+data BMPMsg = BMPRouteMonitoring PerPeerHeader | BMPPeerDown | BMPStatsReport | BMPPeerUP | BMPInitiation PerPeerHeader | BMPTermination | BMPRouteMirroring deriving Show
+
+data PerPeerHeader = PerPeerHeader {
+                                     pphType :: Word8
+                                   , pphFlags :: Word8
+                                   , pphDistinguisher :: BS.ByteString
+                                   , pphAddress :: IP
+                                   , pphAS :: Word32
+                                   , pphBGPID :: IPv4
+                                   , pphTimeStampSecs :: Word32
+                                   , pphTimeStampMicroSecs :: Word32
+                                   , vFlag, lFlag, aFlag :: Bool
+                                   } deriving Show
+getPerPeerHeader = do
+    pphType <- anyWord8
+    pphFlags <- anyWord8
+    let vFlag = testBit pphFlags 7  
+        lFlag = testBit pphFlags 6  
+        aFlag = testBit pphFlags 5  
+    pphDistinguisher <- DAB.take 8
+    pphAddress <- if vFlag then ipIPv6 else DAB.take 12 >> ipIPv4
+    pphAS <- anyWord32be
+    pphBGPID <- zIPv4
+    pphTimeStampSecs <- anyWord32be
+    pphTimeStampMicroSecs <- anyWord32be
+    return PerPeerHeader{..}
 
 
 atto p s = ( p' <|> return Nothing ) <?> s where
@@ -67,13 +94,21 @@ bmpMessageParser' = do
     msgType <- anyWord8
     when (msgType > 6 ) ( fail "invalid message type")
     case msgType of 
-        0 -> return BMPRouteMonitoring
+        0 -> getBMPRouteMonitoring
         1 -> return BMPPeerDown
         2 -> return BMPStatsReport
         3 -> return BMPPeerUP
-        4 -> return BMPInitiation
+        4 -> getBMPInitiation
         5 -> return BMPTermination
         6 -> return BMPRouteMirroring
+
+getBMPRouteMonitoring = do
+    perPeerHeader <- getPerPeerHeader
+    return $ BMPRouteMonitoring perPeerHeader
+
+getBMPInitiation = do
+    perPeerHeader <- getPerPeerHeader
+    return $ BMPInitiation perPeerHeader
 
 bmpParser :: Parser (Maybe BMPMsg)
 bmpParser = ( do msg <- bsParser
@@ -81,19 +116,13 @@ bmpParser = ( do msg <- bsParser
             ) <|> return Nothing
 
 
---bmpParser :: Parser (Maybe BMPMsg)
---bmpParser = do
-    --msg <- bsParser
-    --return $ maybeResult $ parse bmpMessageParser' msg
-
 bsParser :: Parser BS.ByteString
 bsParser = do
     word8 0x03
     msgLen <- anyWord32be
     when (msgLen < 5 || msgLen > 0xffff) ( fail "invalid message length")
     DAB.take (fromIntegral msgLen - 5)
-    -- bs <- DAB.take (fromIntegral msgLen - 5)
-    -- return bs
+
 {-
 4.  BMP Message Format
 
@@ -189,3 +218,22 @@ rawBMPMessageParser' = do
     when (msgLen < 5 || msgLen > 0xffff) ( fail "invalid message length")
     payload <- DAB.take (fromIntegral msgLen - 5)
     return $ BMPMessageRaw payload
+
+
+-- copied from zserv - maybe need some common library for this stuff?
+
+zIPv4 = zIPv4Parser
+zIPv4Parser :: Parser IPv4
+zIPv4Parser = do
+    v4address <- anyWord32le
+    return $ fromHostAddress v4address
+
+ipIPv4 :: Parser IP
+ipIPv4 = fmap IPv4 zIPv4
+
+ipIPv6 :: Parser IP
+ipIPv6 = fmap IPv6 ipIPv6Parser
+ipIPv6Parser = do
+    v6address <- DAB.take 16
+    return $ (toIPv6b . map fromIntegral . BS.unpack) v6address
+
