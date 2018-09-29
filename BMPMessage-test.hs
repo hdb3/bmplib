@@ -14,9 +14,13 @@ main' = parseTest bmpMessageParser' ( s1 `BS.append` BS.replicate 1000 0)
 
 parse' p bs = feed (parse p bs) BS.empty
 
-main = print $ parse' bmpMessageParser' s1
+--main = print $ parse' bmpMessageParser' s1
 
 simpleParser :: Parser Int
 simpleParser = do
     bs <- takeByteString
     return (BS.length bs)
+
+main = print $ parse' getBGPMessage $ 
+                      fromHex "ffffffffffffffffffffffffffffffff003b0104fbf500b4c0a8fe011e02060104000100010202800002020200020641040000fbf5020440020078"
+                      -- fromHex "ffffffffffffffffffffffffffffffff003f0104fbf7005ac0a8fe032202060104000100010202800002020200020440024078020641040000fbf702024700"

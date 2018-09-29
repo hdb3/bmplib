@@ -53,7 +53,7 @@ import Data.Attoparsec.Binary -- from package attoparsec-binary
       Protocol Data Units (PDUs)
 -}
 
-data BMPMsg = BMPGenericNoPerPeerHeader HexByteString | BMPGeneric PerPeerHeader HexByteString | BMPRouteMonitoring PerPeerHeader | BMPPeerDown | BMPStatsReport | BMPPeerUP | BMPInitiation [TLV] | BMPTermination | BMPRouteMirroring deriving Show
+data BMPMsg = BMPGenericNoPerPeerHeader HexByteString | BMPGeneric PerPeerHeader HexByteString | BMPRouteMonitoring PerPeerHeader | BMPPeerDown | BMPStatsReport | BMPPeerUP BMPPeerUPMsg | BMPInitiation [TLV] | BMPTermination | BMPRouteMirroring deriving Show
 
 data PerPeerHeader = PerPeerHeader { pphType :: Word8
                                    , pphFlags :: Word8
@@ -98,13 +98,15 @@ getPerPeerHeader = do
         lFlag = testBit pphFlags 6  
         aFlag = testBit pphFlags 5  
     pphDistinguisher <- DAB.take 8
-    pphAddress <- if vFlag then ipIPv6 else DAB.take 12 >> ipIPv4
+    pphAddress <- getIPv4IPv6 vFlag
     pphAS <- anyWord32be
     pphBGPID <- zIPv4
     pphTimeStampSecs <- anyWord32be
     pphTimeStampMicroSecs <- anyWord32be
     return PerPeerHeader{..}
 
+
+getIPv4IPv6 ip6Flag = if ip6Flag then ipIPv6 else DAB.take 12 >> ipIPv4
 
 atto p s = ( p' <|> return Nothing ) <?> s where
     p' = do tmp <- p
@@ -121,7 +123,7 @@ bmpMessageParser' = do
         0 -> getBMPRouteMonitoring
         1 -> return BMPPeerDown
         2 -> return BMPStatsReport
-        3 -> return BMPPeerUP
+        3 -> getBMPPeerUP
         4 -> getBMPInitiation
         5 -> return BMPTermination
         6 -> return BMPRouteMirroring
@@ -142,6 +144,77 @@ getBMPRouteMonitoring = do
 getBMPInitiation = do
     tlvs <- many1 (try getTLV)
     return $ BMPInitiation tlvs
+
+-- -----------------------
+-- Peer UP
+-- -----------------------
+{-
+4.10.  Peer Up Notification
+
+   The Peer Up message is used to indicate that a peering session has
+   come up (i.e., has transitioned into the Established state).
+   Following the common BMP header and per-peer header is the following:
+
+      0                   1                   2                   3
+      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     |                 Local Address (16 bytes)                      |
+     ~                                                               ~
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     |         Local Port            |        Remote Port            |
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     |                    Sent OPEN Message                          |
+     ~                                                               ~
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     |                  Received OPEN Message                        |
+     ~                                                               ~
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     |                 Information (variable)                        |
+     ~                                                               ~
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+
+-}
+
+data BMPPeerUPMsg = BMPPeerUPMsg { pph :: PerPeerHeader
+                                 , localAddress :: IP
+                                 , localPort, remotePort :: Word16
+                                 , sentOpen, receivedOpen :: BGPMessage
+                                 , information :: [TLV]
+                                 }
+
+instance Show BMPPeerUPMsg where
+    show BMPPeerUPMsg{..} = "BMPPeerUPMsg { pph = " ++ show pph 
+                            ++ "localAddress = " ++ show localAddress
+                            ++ ", localPort = " ++ show localPort
+                            ++ ", remotePort = " ++ show remotePort
+                            ++ ", information = " ++ show information
+                            ++ " }"
+
+getBMPPeerUP:: Parser BMPMsg
+getBMPPeerUP = do
+    pph <- getPerPeerHeader
+    localAddress <- getIPv4IPv6 (vFlag pph)
+    localPort <- anyWord16be
+    remotePort <- anyWord16be
+    sentOpen <- getBGPMessage
+    receivedOpen <- getBGPMessage
+    information <- many' (try getTLV)
+    return $ BMPPeerUP BMPPeerUPMsg {..}
+
+newtype BGPMessage = BGPMessage BS.ByteString
+instance Show BGPMessage where
+    show (BGPMessage bs) = toHex bs
+
+getBGPMessage = do
+    marker <- DAB.take 16
+    when (marker /= BS.replicate 16 0xff ) ( fail "invalid BGP message header")
+    msgLen <- anyWord16be
+    when (msgLen > 4096 ) ( fail "invalid BGP message length")
+    bs <- DAB.take (fromIntegral msgLen - 18)
+    return $ BGPMessage bs
+
+-- -----------------------
 
 bmpParser :: Parser (Maybe BMPMsg)
 bmpParser = ( do msg <- bsParser
