@@ -16,22 +16,7 @@ import qualified Data.Attoparsec.ByteString as DAB
 import Data.Attoparsec.Binary -- from package attoparsec-binary
 
 
-newtype InitiationMessages = InitiationMessages [TLV]
-instance Show InitiationMessages where
-    show (InitiationMessages tlvs) = "\n" ++ showInitiationTLVs tlvs
-
-showInitiationTLVs :: [TLV] -> String
-showInitiationTLVs = unlines . map showInitiationTLV where
-    showInitiationTLV TLV{..} =
-        ( case tlvType of 0 -> "String: "
-                          1 -> "sysDescr: "
-                          2 -> "sysName: "
-                          _ -> "unknown type (" ++ show tlvType ++ "): "
-        ) ++ Data.ByteString.Char8.unpack tlvBody
-
-data BMPMsg = BMPGenericNoPerPeerHeader HexByteString
-            | BMPGeneric PerPeerHeader HexByteString
-            | BMPRouteMonitoring PerPeerHeader
+data BMPMsg = BMPRouteMonitoring RouteMonitoring
             | BMPPeerDown BMPPeerDownMsg
             | BMPPeerStats BMPPeerStatsMsg
             | BMPPeerUP BMPPeerUPMsg
@@ -112,10 +97,36 @@ bmpMessageParser' = do
         5 -> return BMPTermination
         6 -> return BMPRouteMirroring
 
+
+-- -----------------------
+-- Peer Monitoring
+-- -----------------------
+
+data RouteMonitoring = RouteMonitoring PerPeerHeader BGPMessage deriving Show
+
 getBMPRouteMonitoring = do
     perPeerHeader <- getPerPeerHeader
-    return $ BMPRouteMonitoring perPeerHeader
+    bGPMessage <- getBGPMessage
+    return $ BMPRouteMonitoring $ RouteMonitoring perPeerHeader bGPMessage
 
+
+
+-- -----------------------
+-- Initiation
+-- -----------------------
+
+newtype InitiationMessages = InitiationMessages [TLV]
+instance Show InitiationMessages where
+    show (InitiationMessages tlvs) = "\n" ++ showInitiationTLVs tlvs
+
+showInitiationTLVs :: [TLV] -> String
+showInitiationTLVs = unlines . map showInitiationTLV where
+    showInitiationTLV TLV{..} =
+        ( case tlvType of 0 -> "String: "
+                          1 -> "sysDescr: "
+                          2 -> "sysName: "
+                          _ -> "unknown type (" ++ show tlvType ++ "): "
+        ) ++ Data.ByteString.Char8.unpack tlvBody
 getBMPInitiation = do
     tlvs <- many1 getTLV
     return $ BMPInitiation $ InitiationMessages tlvs
