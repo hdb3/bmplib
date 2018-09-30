@@ -15,44 +15,6 @@ import Data.Attoparsec.ByteString -- from package attoparsec
 import qualified Data.Attoparsec.ByteString as DAB
 import Data.Attoparsec.Binary -- from package attoparsec-binary
 
-{-
-3.1.  BMP Messages
-
-   The following are the messages provided by BMP:
-
-   o  Route Monitoring (RM): Used to provide an initial dump of all
-      routes received from a peer, as well as an ongoing mechanism that
-      sends the incremental routes advertised and withdrawn by a peer to
-      the monitoring station.
-
-   o  Peer Down Notification: A message sent to indicate that a peering
-      session has gone down with information indicating the reason for
-      the session disconnect.
-
-   o  Stats Reports (SR): An ongoing dump of statistics that can be used
-      by the monitoring station as a high-level indication of the
-      activity going on in the router.
-
-   o  Peer Up Notification: A message sent to indicate that a peering
-      session has come up.  The message includes information regarding
-      the data exchanged between the peers in their OPEN messages, as
-      well as information about the peering TCP session itself.  In
-      addition to being sent whenever a peer transitions to the
-      Established state, a Peer Up Notification is sent for each peer in
-      the Established state when the BMP session itself comes up.
-
-   o  Initiation: A means for the monitored router to inform the
-      monitoring station of its vendor, software version, and so on.
-
-   o  Termination: A means for the monitored router to inform the
-      monitoring station of why it is closing a BMP session.
-
-   o  Route Mirroring: A means for the monitored router to send verbatim
-      duplicates of messages as received.  Can be used to exactly mirror
-      a monitored BGP session.  Can also be used to report malformed BGP
-      Protocol Data Units (PDUs)
--}
-
 
 newtype InitiationMessages = InitiationMessages [TLV]
 instance Show InitiationMessages where
@@ -150,15 +112,6 @@ bmpMessageParser' = do
         5 -> return BMPTermination
         6 -> return BMPRouteMirroring
 
-getBMPGenericNoPerPeerHeader = do
-    bs <- takeByteString
-    return $ BMPGenericNoPerPeerHeader (HexByteString bs)
-
-getBMPGeneric = do
-    perPeerHeader <- getPerPeerHeader
-    bs <- takeByteString
-    return $ BMPGeneric perPeerHeader (HexByteString bs)
-
 getBMPRouteMonitoring = do
     perPeerHeader <- getPerPeerHeader
     return $ BMPRouteMonitoring perPeerHeader
@@ -207,28 +160,6 @@ getBMPPeerDown = do
     return $ BMPPeerDown BMPPeerDownMsg {..}
 
 -- -----------------------
-
--- -----------------------
--- Per Peer Statistics
--- -----------------------
-
-data BMPPeerStatsMsg = BMPPeerStatsMsg { pph :: PerPeerHeader
-                                 , stats :: [TLV]
-                                 }
-
-instance Show BMPPeerStatsMsg where
-    show BMPPeerStatsMsg{..} = "BMPPeerStatsMsg { pph = " ++ show pph 
-                            ++ ", stats = " ++ show stats
-                            ++ " }"
-
-getBMPPeerStats:: Parser BMPMsg
-getBMPPeerStats = do
-    pph <- getPerPeerHeader
-    statsCount <- anyWord32be
-    stats <- many' getTLV
-    return $ BMPPeerStats BMPPeerStatsMsg {..}
-
-
 -- -----------------------
 -- Peer UP
 -- -----------------------
@@ -257,6 +188,28 @@ getBMPPeerUP = do
     receivedOpen <- getBGPMessage
     information <- many' getTLV
     return $ BMPPeerUP BMPPeerUPMsg {..}
+
+
+-- -----------------------
+-- Per Peer Statistics
+-- -----------------------
+
+data BMPPeerStatsMsg = BMPPeerStatsMsg { pph :: PerPeerHeader
+                                 , stats :: [TLV]
+                                 }
+
+instance Show BMPPeerStatsMsg where
+    show BMPPeerStatsMsg{..} = "BMPPeerStatsMsg { pph = " ++ show pph 
+                            ++ ", stats = " ++ show stats
+                            ++ " }"
+
+getBMPPeerStats:: Parser BMPMsg
+getBMPPeerStats = do
+    pph <- getPerPeerHeader
+    statsCount <- anyWord32be
+    stats <- many' getTLV
+    return $ BMPPeerStats BMPPeerStatsMsg {..}
+
 
 -- -----------------------
 
@@ -289,47 +242,6 @@ bsParser = do
     msgLen <- anyWord32be
     when (msgLen < 5 || msgLen > 0xffff) ( fail "invalid message length")
     DAB.take (fromIntegral msgLen - 5)
-
-{-
-4.  BMP Message Format
-
-4.1.  Common Header
-
-   The following common header appears in all BMP messages.  The rest of
-   the data in a BMP message is dependent on the Message Type field in
-   the common header.
-
-      0                   1                   2                   3
-      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-     +-+-+-+-+-+-+-+-+
-     |    Version    |
-     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-     |                        Message Length                         |
-     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-     |   Msg. Type   |
-     +---------------+
-
-   o  Version (1 byte): Indicates the BMP version.  This is set to '3'
-      for all messages defined in this specification. ('1' and '2' were
-      used by draft versions of this document.)  Version 0 is reserved
-      and MUST NOT be sent.
-
-   o  Message Length (4 bytes): Length of the message in bytes
-      (including headers, data, and encapsulated messages, if any).
-
-   o  Message Type (1 byte): This identifies the type of the BMP
-      message.  A BMP implementation MUST ignore unrecognized message
-      types upon receipt.
-
-      *  Type = 0: Route Monitoring
-      *  Type = 1: Statistics Report
-      *  Type = 2: Peer Down Notification
-      *  Type = 3: Peer Up Notification
-      *  Type = 4: Initiation Message
-      *  Type = 5: Termination Message
-      *  Type = 6: Route Mirroring Message
--}
-
 
 -- HexByteString exists in order to implement a useful instance of 'show'
 
