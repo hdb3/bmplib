@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DuplicateRecordFields, RecordWildCards #-}
 module BMPMessage where
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8
@@ -53,7 +53,29 @@ import Data.Attoparsec.Binary -- from package attoparsec-binary
       Protocol Data Units (PDUs)
 -}
 
-data BMPMsg = BMPGenericNoPerPeerHeader HexByteString | BMPGeneric PerPeerHeader HexByteString | BMPRouteMonitoring PerPeerHeader | BMPPeerDown | BMPStatsReport | BMPPeerUP BMPPeerUPMsg | BMPInitiation [TLV] | BMPTermination | BMPRouteMirroring deriving Show
+
+newtype InitiationMessages = InitiationMessages [TLV]
+instance Show InitiationMessages where
+    show (InitiationMessages tlvs) = "\n" ++ showInitiationTLVs tlvs
+
+showInitiationTLVs :: [TLV] -> String
+showInitiationTLVs = unlines . map showInitiationTLV where
+    showInitiationTLV TLV{..} =
+        ( case tlvType of 0 -> "String: "
+                          1 -> "sysDescr: "
+                          2 -> "sysName: "
+                          _ -> "unknown type (" ++ show tlvType ++ "): "
+        ) ++ Data.ByteString.Char8.unpack tlvBody
+
+data BMPMsg = BMPGenericNoPerPeerHeader HexByteString
+            | BMPGeneric PerPeerHeader HexByteString
+            | BMPRouteMonitoring PerPeerHeader
+            | BMPPeerDown BMPPeerDownMsg
+            | BMPPeerStats BMPPeerStatsMsg
+            | BMPPeerUP BMPPeerUPMsg
+            | BMPInitiation InitiationMessages
+            | BMPTermination
+            | BMPRouteMirroring deriving Show
 
 data PerPeerHeader = PerPeerHeader { pphType :: Word8
                                    , pphFlags :: Word8
@@ -121,8 +143,8 @@ bmpMessageParser' = do
     when (msgType > 6 ) ( fail "invalid message type")
     case msgType of 
         0 -> getBMPRouteMonitoring
-        1 -> return BMPPeerDown
-        2 -> return BMPStatsReport
+        1 -> getBMPPeerStats
+        2 -> getBMPPeerDown
         3 -> getBMPPeerUP
         4 -> getBMPInitiation
         5 -> return BMPTermination
@@ -142,39 +164,74 @@ getBMPRouteMonitoring = do
     return $ BMPRouteMonitoring perPeerHeader
 
 getBMPInitiation = do
-    tlvs <- many1 (try getTLV)
-    return $ BMPInitiation tlvs
+    tlvs <- many1 getTLV
+    return $ BMPInitiation $ InitiationMessages tlvs
+
+-- -----------------------
+-- Peer Down
+-- -----------------------
+
+data BMPPeerDownMsg = BMPPeerDownMsg { pph :: PerPeerHeader
+                                     , reason :: Word8
+                                     , notification :: Maybe BGPMessage
+                                     , eventCode :: Maybe Word16
+                                 }
+
+instance Show BMPPeerDownMsg where
+    show BMPPeerDownMsg{..} = "BMPPeerDown { pph = " ++ show pph
+                            ++ "reason = "
+                            ++ ( case reason of
+                                   1 -> "local termination, BGP Notification: " ++ maybe "<empty>" show notification
+                                   2 -> "local termination, FSM event code: " ++ maybe "<empty>" show eventCode
+                                   3 -> "remote termination, BGP Notification: " ++ maybe "<empty>" show notification
+                                   4 -> "remote peer disconnected"
+                                   5 -> "reporting disabled"
+                                   _ -> "unknown reason code: " ++ show reason
+                               )
+                            ++ " }"
+
+getBMPPeerDown:: Parser BMPMsg
+getBMPPeerDown = do
+    pph <- getPerPeerHeader
+    reason <- anyWord8
+    (notification, eventCode) <-
+        case reason of
+            1 -> do bgpMsg <- getBGPMessage
+                    return (Just bgpMsg, Nothing)
+            2 -> do ec <- anyWord16be
+                    return (Nothing, Just ec)
+            3 -> do bgpMsg <- getBGPMessage
+                    return (Just bgpMsg, Nothing)
+            _ -> return (Nothing, Nothing)
+
+    return $ BMPPeerDown BMPPeerDownMsg {..}
+
+-- -----------------------
+
+-- -----------------------
+-- Per Peer Statistics
+-- -----------------------
+
+data BMPPeerStatsMsg = BMPPeerStatsMsg { pph :: PerPeerHeader
+                                 , stats :: [TLV]
+                                 }
+
+instance Show BMPPeerStatsMsg where
+    show BMPPeerStatsMsg{..} = "BMPPeerStatsMsg { pph = " ++ show pph 
+                            ++ ", stats = " ++ show stats
+                            ++ " }"
+
+getBMPPeerStats:: Parser BMPMsg
+getBMPPeerStats = do
+    pph <- getPerPeerHeader
+    statsCount <- anyWord32be
+    stats <- many' getTLV
+    return $ BMPPeerStats BMPPeerStatsMsg {..}
+
 
 -- -----------------------
 -- Peer UP
 -- -----------------------
-{-
-4.10.  Peer Up Notification
-
-   The Peer Up message is used to indicate that a peering session has
-   come up (i.e., has transitioned into the Established state).
-   Following the common BMP header and per-peer header is the following:
-
-      0                   1                   2                   3
-      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-     |                 Local Address (16 bytes)                      |
-     ~                                                               ~
-     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-     |         Local Port            |        Remote Port            |
-     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-     |                    Sent OPEN Message                          |
-     ~                                                               ~
-     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-     |                  Received OPEN Message                        |
-     ~                                                               ~
-     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-     |                 Information (variable)                        |
-     ~                                                               ~
-     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-
--}
 
 data BMPPeerUPMsg = BMPPeerUPMsg { pph :: PerPeerHeader
                                  , localAddress :: IP
@@ -188,9 +245,8 @@ instance Show BMPPeerUPMsg where
                             ++ "localAddress = " ++ show localAddress
                             ++ ", localPort = " ++ show localPort
                             ++ ", remotePort = " ++ show remotePort
-                            ++ ", information = " ++ show information
+                            ++ showInitiationTLVs information
                             ++ " }"
-
 getBMPPeerUP:: Parser BMPMsg
 getBMPPeerUP = do
     pph <- getPerPeerHeader
@@ -199,8 +255,10 @@ getBMPPeerUP = do
     remotePort <- anyWord16be
     sentOpen <- getBGPMessage
     receivedOpen <- getBGPMessage
-    information <- many' (try getTLV)
+    information <- many' getTLV
     return $ BMPPeerUP BMPPeerUPMsg {..}
+
+-- -----------------------
 
 newtype BGPMessage = BGPMessage BS.ByteString
 instance Show BGPMessage where
