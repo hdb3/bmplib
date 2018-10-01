@@ -2,8 +2,6 @@
 module Main where
 import System.IO.Streams
 import System.IO.Streams.Attoparsec.ByteString
-import Data.Attoparsec.ByteString -- from package attoparsec
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as L
 import Data.Binary
 
@@ -13,17 +11,25 @@ import BGPlib hiding (BGPByteString,TLV,getBGPByteString)
 main = go bmpParser action
 
 action msg = do
-    putStrLn $ showBGPMsg msg
+    putStrLn $ showBMPMsg msg
 
-showBGPMsg :: BMPMsg -> String
-showBGPMsg (BMPPeerUP x@BMPPeerUPMsg{..}) = show x ++ showBGP sentOpen ++ showBGP receivedOpen 
-showBGPMsg (BMPRouteMonitoring ( RouteMonitoring perPeerHeader bGPMessage)) = "BMPRouteMonitoring { " ++ show perPeerHeader ++ showBGP bGPMessage ++ " }"
-showBGPMsg x = show x
+showBMPMsg :: BMPMsg -> String
+showBMPMsg (BMPPeerUP x@BMPPeerUPMsg{..}) = show x ++ showBGPByteString sentOpen ++ showBGPByteString receivedOpen 
+showBMPMsg (BMPRouteMonitoring ( RouteMonitoring perPeerHeader bGPMessage)) = "BMPRouteMonitoring { " ++ show perPeerHeader ++ showBGPByteString bGPMessage ++ " }"
+showBMPMsg x = show x
 
 
-showBGP :: BGPByteString -> String
--- showBGP (BGPByteString bs) = " [ " ++ toHex bs ++ " ] "
-showBGP = show . fromBGP
+showBGPByteString :: BGPByteString -> String
+showBGPByteString = showBGP . fromBGP
+showBGP BGPUpdate {..} = " BGPUpdate: "
+                    ++ "\nNLRI:       " ++ show nlri'
+                    ++ "\nWithdrawn:  " ++ show withdrawn'
+                    ++ "\nAttributes: " ++ show attributes' where
+    nlri' = decodeAddrRange nlri
+    withdrawn' = decodeAddrRange withdrawn
+    attributes' = decodeAttributes attributes
+
+showBGP x = show x
 
 fromBGP :: BGPByteString -> BGPMessage
 fromBGP (BGPByteString bs) = decode $ L.fromStrict bs
@@ -38,5 +44,3 @@ go parser action = do
               ( \bmpMsg -> do action bmpMsg
                               loop stream )
               msg
-
-
