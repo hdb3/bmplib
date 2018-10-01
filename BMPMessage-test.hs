@@ -1,30 +1,32 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Base16
 import Data.Attoparsec.ByteString -- from package attoparsec
+import Data.Binary
 
 import BMPMessage
+import BGPlib hiding (BGPByteString,TLV,getBGPByteString)
+
+fromBGP :: BS.ByteString -> BGPMessage
+fromBGP = decode . L.fromStrict
+
 fromHex = fst . Data.ByteString.Base16.decode
 
-s1 = fromHex "04000100964a756e69706572204e6574776f726b732c20496e632e206d33323020696e7465726e657420726f757465722c206b65726e656c204a554e4f532031352e3152342e362c204275696c6420646174653a20323031362d30362d32332032323a30353a30362055544320436f707972696768742028632920313939362d32303136204a756e69706572204e6574776f726b732c20496e632e000200086d3332302d726530"
-
-main'' = parseTest simpleParser ( s1 `BS.append` BS.replicate 1000 0)
-main' = parseTest bmpMessageParser' ( s1 `BS.append` BS.replicate 1000 0)
 
 parse' p bs = feed (parse p bs) BS.empty
 
 --main = print $ parse' bmpMessageParser' s1
 
-simpleParser :: Parser Int
-simpleParser = do
-    bs <- takeByteString
-    return (BS.length bs)
-
-main = print $ parse' bmpMessageParser
+main = print $ fromBGP
+               -- parse' bmpMessageParser
+                      _sentOpen
+                      -- _rcvdOpen
+                      -- _update1
                       -- _BMPInitiation
                       -- _BMPPeerUP
-                      _BMPPeerStats
+                      -- _BMPPeerStats
                       -- _BMPRouteMonitoring1
                       -- _BMPRouteMonitoring2
                       --  getBGPMessage
@@ -32,6 +34,11 @@ main = print $ parse' bmpMessageParser
                       -- $ fromHex "ffffffffffffffffffffffffffffffff003b0104fbf500b4c0a8fe011e02060104000100010202800002020200020641040000fbf5020440020078"
                       -- fromHex "ffffffffffffffffffffffffffffffff003b0104fbf500b4c0a8fe011e02060104000100010202800002020200020641040000fbf5020440020078"
                       -- fromHex "ffffffffffffffffffffffffffffffff003f0104fbf7005ac0a8fe032202060104000100010202800002020200020440024078020641040000fbf702024700"
+
+
+_sentOpen = fromHex "0104fbf7005ac0a8fe032202060104000100010202800002020200020440024078020641040000fbf702024700"
+_rcvdOpen = fromHex "0104fbf500b4c0a8fe011e02060104000100010202800002020200020641040000fbf5020440020078"
+_update1 = fromHex "020000003b4001010040021602050000fbf50000637400000cb900000b62000009d74003040a000202c008140cb91f730cb975e80cb9c3510cb9d4800cb9d48118010010159dfa801085af1667f9b81667f5e41667f3d01667f3781767f1401667c5d016671bf416671b9c16671aa4162bfb30162be7dc"
 
 _BMPInitiation = fromHex "04000100964a756e69706572204e6574776f726b732c20496e632e206d33323020696e7465726e657420726f757465722c206b65726e656c204a554e4f532031352e3152342e362c204275696c6420646174653a20323031362d30362d32332032323a30353a30362055544320436f707972696768742028632920313939362d32303136204a756e69706572204e6574776f726b732c20496e632e000200086d3332302d726530"
 

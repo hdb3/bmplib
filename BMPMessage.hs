@@ -15,6 +15,7 @@ import Data.Attoparsec.ByteString -- from package attoparsec
 import qualified Data.Attoparsec.ByteString as DAB
 import Data.Attoparsec.Binary -- from package attoparsec-binary
 
+-- import BGPlib hiding (BGPByteString,TLV,getBGPByteString)
 
 data BMPMsg = BMPRouteMonitoring RouteMonitoring
             | BMPPeerDown BMPPeerDownMsg
@@ -102,11 +103,11 @@ bmpMessageParser' = do
 -- Peer Monitoring
 -- -----------------------
 
-data RouteMonitoring = RouteMonitoring PerPeerHeader BGPMessage deriving Show
+data RouteMonitoring = RouteMonitoring PerPeerHeader BGPByteString deriving Show
 
 getBMPRouteMonitoring = do
     perPeerHeader <- getPerPeerHeader
-    bGPMessage <- getBGPMessage
+    bGPMessage <- getBGPByteString
     return $ BMPRouteMonitoring $ RouteMonitoring perPeerHeader bGPMessage
 
 
@@ -137,7 +138,7 @@ getBMPInitiation = do
 
 data BMPPeerDownMsg = BMPPeerDownMsg { pph :: PerPeerHeader
                                      , reason :: Word8
-                                     , notification :: Maybe BGPMessage
+                                     , notification :: Maybe BGPByteString
                                      , eventCode :: Maybe Word16
                                  }
 
@@ -160,11 +161,11 @@ getBMPPeerDown = do
     reason <- anyWord8
     (notification, eventCode) <-
         case reason of
-            1 -> do bgpMsg <- getBGPMessage
+            1 -> do bgpMsg <- getBGPByteString
                     return (Just bgpMsg, Nothing)
             2 -> do ec <- anyWord16be
                     return (Nothing, Just ec)
-            3 -> do bgpMsg <- getBGPMessage
+            3 -> do bgpMsg <- getBGPByteString
                     return (Just bgpMsg, Nothing)
             _ -> return (Nothing, Nothing)
 
@@ -178,7 +179,7 @@ getBMPPeerDown = do
 data BMPPeerUPMsg = BMPPeerUPMsg { pph :: PerPeerHeader
                                  , localAddress :: IP
                                  , localPort, remotePort :: Word16
-                                 , sentOpen, receivedOpen :: BGPMessage
+                                 , sentOpen, receivedOpen :: BGPByteString
                                  , information :: [TLV]
                                  }
 
@@ -195,8 +196,8 @@ getBMPPeerUP = do
     localAddress <- getIPv4IPv6 (vFlag pph)
     localPort <- anyWord16be
     remotePort <- anyWord16be
-    sentOpen <- getBGPMessage
-    receivedOpen <- getBGPMessage
+    sentOpen <- getBGPByteString
+    receivedOpen <- getBGPByteString
     information <- many' getTLV
     return $ BMPPeerUP BMPPeerUPMsg {..}
 
@@ -224,17 +225,17 @@ getBMPPeerStats = do
 
 -- -----------------------
 
-newtype BGPMessage = BGPMessage BS.ByteString
-instance Show BGPMessage where
-    show (BGPMessage bs) = toHex bs
+newtype BGPByteString = BGPByteString BS.ByteString
+instance Show BGPByteString where
+    show (BGPByteString bs) = toHex bs
 
-getBGPMessage = do
+getBGPByteString = do
     marker <- DAB.take 16
     when (marker /= BS.replicate 16 0xff ) ( fail "invalid BGP message header")
     msgLen <- anyWord16be
     when (msgLen > 4096 ) ( fail "invalid BGP message length")
     bs <- DAB.take (fromIntegral msgLen - 18)
-    return $ BGPMessage bs
+    return $ BGPByteString bs
 
 -- -----------------------
 
