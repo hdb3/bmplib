@@ -22,12 +22,9 @@ showBMPMsg x = show x
 showBGPByteString :: BGPByteString -> String
 showBGPByteString = showBGP . fromBGP
 showBGP BGPUpdate {..} = " BGPUpdate: "
-                    ++ "\nNLRI:       " ++ show nlri'
-                    ++ "\nWithdrawn:  " ++ show withdrawn'
-                    ++ "\nAttributes: " ++ show attributes' where
-    nlri' = decodeAddrRange nlri
-    withdrawn' = decodeAddrRange withdrawn
-    attributes' = decodeAttributes attributes
+                    ++ "\nNLRI:       " ++ show ( decodeAddrRange nlri )
+                    ++ "\nWithdrawn:  " ++ show ( decodeAddrRange withdrawn )
+                    ++ "\nAttributes: " ++ show ( decodeAttributes attributes )
 
 showBGP x = show x
 
