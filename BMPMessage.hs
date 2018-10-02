@@ -1,21 +1,21 @@
 {-# LANGUAGE DuplicateRecordFields, RecordWildCards #-}
 module BMPMessage where
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8
-import qualified Data.ByteString.Base16
-import Data.IP
-import Data.Bits
-import Data.Binary
-import Data.Binary.Put
-import Data.Binary.Get
+import Data.Word
+import Data.Attoparsec.ByteString
+import Data.Attoparsec.Binary
+import Data.Binary.Put  ( putByteString, putWord8, putWord32be )
+import Data.Binary.Get  ( getWord8, getWord32be, getByteString )
 import Data.Monoid((<>))
 import Control.Monad(when,unless)
 import Control.Applicative((<|>))
-import Data.Attoparsec.ByteString -- from package attoparsec
-import qualified Data.Attoparsec.ByteString as DAB
-import Data.Attoparsec.Binary -- from package attoparsec-binary
+import qualified Data.IP as IP
+import qualified Data.Bits as Bits
+import qualified Data.Binary as Binary
+import qualified Data.Binary.Get as Binary
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8
+import qualified Data.ByteString.Base16
 
--- import BGPlib hiding (BGPByteString,TLV,getBGPByteString)
 
 data BMPMsg = BMPRouteMonitoring RouteMonitoring
             | BMPPeerDown BMPPeerDownMsg
@@ -28,9 +28,9 @@ data BMPMsg = BMPRouteMonitoring RouteMonitoring
 data PerPeerHeader = PerPeerHeader { pphType :: Word8
                                    , pphFlags :: Word8
                                    , pphDistinguisher :: BS.ByteString
-                                   , pphAddress :: IP
+                                   , pphAddress :: IP.IP
                                    , pphAS :: Word32
-                                   , pphBGPID :: IPv4
+                                   , pphBGPID :: IP.IPv4
                                    , pphTimeStampSecs :: Word32
                                    , pphTimeStampMicroSecs :: Word32
                                    , vFlag, lFlag, aFlag :: Bool
@@ -43,7 +43,7 @@ data TLV = TLV { tlvType :: Word16
 getTLV = do
     tlvType<- anyWord16be
     tlvLength <- anyWord16be
-    tlvBody  <- DAB.take (fromIntegral tlvLength)
+    tlvBody  <- Data.Attoparsec.ByteString.take (fromIntegral tlvLength)
     return TLV {..}
 
 instance Show TLV where
@@ -64,10 +64,10 @@ instance Show PerPeerHeader where
 getPerPeerHeader = do
     pphType <- anyWord8
     pphFlags <- anyWord8
-    let vFlag = testBit pphFlags 7  
-        lFlag = testBit pphFlags 6  
-        aFlag = testBit pphFlags 5  
-    pphDistinguisher <- DAB.take 8
+    let vFlag = Bits.testBit pphFlags 7  
+        lFlag = Bits.testBit pphFlags 6  
+        aFlag = Bits.testBit pphFlags 5  
+    pphDistinguisher <- Data.Attoparsec.ByteString.take 8
     pphAddress <- getIPv4IPv6 vFlag
     pphAS <- anyWord32be
     pphBGPID <- zIPv4
@@ -76,7 +76,7 @@ getPerPeerHeader = do
     return PerPeerHeader{..}
 
 
-getIPv4IPv6 ip6Flag = if ip6Flag then ipIPv6 else DAB.take 12 >> ipIPv4
+getIPv4IPv6 ip6Flag = if ip6Flag then ipIPv6 else Data.Attoparsec.ByteString.take 12 >> ipIPv4
 
 atto p s = ( p' <|> return Nothing ) <?> s where
     p' = do tmp <- p
@@ -88,7 +88,6 @@ bmpMessageParser = atto bmpMessageParser' "BMP payload parser"
 bmpMessageParser' :: Parser BMPMsg
 bmpMessageParser' = do
     msgType <- anyWord8
-    when (msgType > 6 ) ( fail "invalid message type")
     case msgType of 
         0 -> getBMPRouteMonitoring
         1 -> getBMPPeerStats
@@ -97,6 +96,7 @@ bmpMessageParser' = do
         4 -> getBMPInitiation
         5 -> return BMPTermination
         6 -> return BMPRouteMirroring
+        _ -> fail "invalid message type"
 
 
 -- -----------------------
@@ -177,7 +177,7 @@ getBMPPeerDown = do
 -- -----------------------
 
 data BMPPeerUPMsg = BMPPeerUPMsg { pph :: PerPeerHeader
-                                 , localAddress :: IP
+                                 , localAddress :: IP.IP
                                  , localPort, remotePort :: Word16
                                  , sentOpen, receivedOpen :: BGPByteString
                                  , information :: [TLV]
@@ -220,6 +220,7 @@ getBMPPeerStats = do
     pph <- getPerPeerHeader
     statsCount <- anyWord32be
     stats <- many' getTLV
+    unless (fromIntegral statsCount == length stats) ( fail "invalid BMP statsCount")
     return $ BMPPeerStats BMPPeerStatsMsg {..}
 
 
@@ -230,11 +231,11 @@ instance Show BGPByteString where
     show (BGPByteString bs) = toHex bs
 
 getBGPByteString = do
-    marker <- DAB.take 16
+    marker <- Data.Attoparsec.ByteString.take 16
     when (marker /= BS.replicate 16 0xff ) ( fail "invalid BGP message header")
     msgLen <- anyWord16be
     when (msgLen > 4096 ) ( fail "invalid BGP message length")
-    bs <- DAB.take (fromIntegral msgLen - 18)
+    bs <- Data.Attoparsec.ByteString.take (fromIntegral msgLen - 18)
     return $ BGPByteString bs
 
 -- -----------------------
@@ -253,7 +254,7 @@ bsParser = do
     word8 0x03
     msgLen <- anyWord32be
     when (msgLen < 5 || msgLen > 0xffff) ( fail "invalid message length")
-    DAB.take (fromIntegral msgLen - 5)
+    Data.Attoparsec.ByteString.take (fromIntegral msgLen - 5)
 
 -- HexByteString exists in order to implement a useful instance of 'show'
 
@@ -267,7 +268,7 @@ hbLength (HexByteString hb) = BS.length hb
 getHexByteString n = do bs <- getByteString n
                         return ( HexByteString bs)
 
-instance Binary HexByteString where
+instance Binary.Binary HexByteString where
     get = undefined
     put (HexByteString bs) = putByteString bs
 
@@ -279,14 +280,14 @@ extract (BMPMessageRaw bs) = bs
 instance Show BMPMessageRaw where
     show (BMPMessageRaw bs) = toHex bs
 
-instance Binary BMPMessageRaw where
-    get = label "BMPMessageRaw" $ do
+instance Binary.Binary BMPMessageRaw where
+    get = Binary.label "BMPMessageRaw" $ do
         version <- getWord8
         unless (version == 0x03) (fail $ "BMPMessageRaw: incorrect version - expected 3 got " ++ show version) -- version hardcoded
         msgLength <- getWord32be             
         payload <- getByteString (fromIntegral msgLength -5)
         return $ BMPMessageRaw payload
-    put (BMPMessageRaw payload) = putWord8 0x03 <> putWord32be (fromIntegral $ 5 + BS.length payload) <> put payload 
+    put (BMPMessageRaw payload) = putWord8 0x03 <> putWord32be (fromIntegral $ 5 + BS.length payload) <> Binary.put payload 
 
 rawBMPMessageParser :: Parser (Maybe BMPMessageRaw)
 rawBMPMessageParser = atto rawBMPMessageParser' "BMP wire format parser"
@@ -297,7 +298,7 @@ rawBMPMessageParser' = do
     word8 0x03
     msgLen <- anyWord32be
     when (msgLen < 5 || msgLen > 0xffff) ( fail "invalid message length")
-    payload <- DAB.take (fromIntegral msgLen - 5)
+    payload <- Data.Attoparsec.ByteString.take (fromIntegral msgLen - 5)
     return $ BMPMessageRaw payload
 
 
@@ -306,16 +307,16 @@ rawBMPMessageParser' = do
 toHex = Data.ByteString.Char8.unpack . Data.ByteString.Base16.encode
 
 zIPv4 = zIPv4Parser
-zIPv4Parser :: Parser IPv4
+zIPv4Parser :: Parser IP.IPv4
 zIPv4Parser = do
     v4address <- anyWord32le
-    return $ fromHostAddress v4address
+    return $ IP.fromHostAddress v4address
 
-ipIPv4 :: Parser IP
-ipIPv4 = fmap IPv4 zIPv4
+ipIPv4 :: Parser IP.IP
+ipIPv4 = fmap IP.IPv4 zIPv4
 
-ipIPv6 :: Parser IP
-ipIPv6 = fmap IPv6 ipIPv6Parser
+ipIPv6 :: Parser IP.IP
+ipIPv6 = fmap IP.IPv6 ipIPv6Parser
 ipIPv6Parser = do
-    v6address <- DAB.take 16
-    return $ (toIPv6b . map fromIntegral . BS.unpack) v6address
+    v6address <- Data.Attoparsec.ByteString.take 16
+    return $ (IP.toIPv6b . map fromIntegral . BS.unpack) v6address
