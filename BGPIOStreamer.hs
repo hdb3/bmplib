@@ -9,6 +9,7 @@ import qualified Network.Socket as NS
 import qualified System.IO
 import qualified System.IO.Streams as Streams
 import qualified System.IO.Streams.Attoparsec.ByteString as Streams
+import Control.Concurrent.MVar
 
 import BMPMessage
 import BGPlib hiding (BGPByteString,TLV,getBGPByteString)
@@ -27,17 +28,43 @@ main = do
                       Streams.handleToInputStream handle
 
     stream <- Streams.parserToInputStream bmpParser source
-    loop stream where
-    loop stream = do
+    bmpState <- newMVar (BMPState [] [] 0 )
+    loop stream bmpState where
+    loop stream st = do
         msg <- Streams.read stream
         maybe (putStrLn "end of messages")
-              ( \bmpMsg -> do action bmpMsg
-                              loop stream )
+              ( \bmpMsg -> do processBMPMsg st bmpMsg
+                              -- action bmpMsg st
+                              loop stream st )
               msg
 
-
-action msg = do
+action msg st = do
     putStrLn $ showBMPMsg msg
+
+data BMPState = BMPState { peers :: [BMPPeerUPMsg] , rib :: [IP.AddrRange IP.IPv4], ribsize :: Int }
+
+processBMPMsg :: MVar BMPState -> BMPMsg -> IO()
+processBMPMsg m (BMPPeerUP msg@BMPPeerUPMsg{..}) = do
+    putStrLn $ "BMP Peer Up from " ++ show msg
+    bmpState <- takeMVar m
+    let peers' = msg : (peers bmpState)
+    putMVar m bmpState{peers=peers'}
+
+processBMPMsg m (BMPRouteMonitoring (RouteMonitoring pph bgpMsg)) = do
+    let updates = decodeAddrRange $ nlri $ fromBGP bgpMsg
+    putStrLn $ "BMP RM " ++ show (pphBGPID pph)
+             ++ " prefixes: " ++ show updates
+    bmpState <- takeMVar m
+    -- let rib' = updates ++ (rib bmpState)
+    let rib' = (rib bmpState) ++ updates
+    -- putStrLn $ "rIb size: " ++ show (length rib')
+    -- putMVar m bmpState{rib=rib'}
+    -- let ribsize' = length updates + (ribsize bmpState)
+    -- putStrLn $ "rIb size: " ++ show ribsize'
+    putStrLn $ "rIb size: " ++ show (length rib')
+    putMVar m bmpState{rib=rib', ribsize=ribsize'}
+
+processBMPMsg m bmpMsg = print bmpMsg
 
 showBMPMsg :: BMPMsg -> String
 showBMPMsg (BMPPeerUP x@BMPPeerUPMsg{..}) = show x ++ showBGPByteString sentOpen ++ showBGPByteString receivedOpen 

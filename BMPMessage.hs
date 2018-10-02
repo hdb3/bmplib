@@ -128,6 +128,7 @@ showInitiationTLVs = unlines . map showInitiationTLV where
                           2 -> "sysName: "
                           _ -> "unknown type (" ++ show tlvType ++ "): "
         ) ++ Data.ByteString.Char8.unpack tlvBody
+
 getBMPInitiation = do
     tlvs <- many1 getTLV
     return $ BMPInitiation $ InitiationMessages tlvs
@@ -188,7 +189,7 @@ instance Show BMPPeerUPMsg where
                             ++ "localAddress = " ++ show localAddress
                             ++ ", localPort = " ++ show localPort
                             ++ ", remotePort = " ++ show remotePort
-                            ++ showInitiationTLVs information
+                            ++ show information
                             ++ " }"
 getBMPPeerUP:: Parser BMPMsg
 getBMPPeerUP = do
