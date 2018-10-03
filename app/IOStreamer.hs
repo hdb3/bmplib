@@ -5,7 +5,7 @@ import System.IO.Streams.Attoparsec.ByteString
 import Data.Attoparsec.ByteString -- from package attoparsec
 import qualified Data.ByteString as BS
 
-import BMPMessage
+import BMPlib
 
 -- main = go rawBMPMessageParser action2
 main = go bmpParser print

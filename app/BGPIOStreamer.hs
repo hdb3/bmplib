@@ -11,7 +11,7 @@ import qualified System.IO.Streams as Streams
 import qualified System.IO.Streams.Attoparsec.ByteString as Streams
 import Control.Concurrent.MVar
 
-import BMPMessage
+import BMPlib
 import BGPlib hiding (BGPByteString,TLV,getBGPByteString)
 
 main = do
@@ -28,7 +28,7 @@ main = do
                       Streams.handleToInputStream handle
 
     stream <- Streams.parserToInputStream bmpParser source
-    bmpState <- newMVar (BMPState [] [] 0 )
+    bmpState <- newMVar (BMPState [] [] )
     loop stream bmpState where
     loop stream st = do
         msg <- Streams.read stream
@@ -41,7 +41,7 @@ main = do
 action msg st = do
     putStrLn $ showBMPMsg msg
 
-data BMPState = BMPState { peers :: [BMPPeerUPMsg] , rib :: [IP.AddrRange IP.IPv4], ribsize :: Int }
+data BMPState = BMPState { peers :: [BMPPeerUPMsg] , rib :: [IP.AddrRange IP.IPv4] }
 
 processBMPMsg :: MVar BMPState -> BMPMsg -> IO()
 processBMPMsg m (BMPPeerUP msg@BMPPeerUPMsg{..}) = do
@@ -55,14 +55,9 @@ processBMPMsg m (BMPRouteMonitoring (RouteMonitoring pph bgpMsg)) = do
     putStrLn $ "BMP RM " ++ show (pphBGPID pph)
              ++ " prefixes: " ++ show updates
     bmpState <- takeMVar m
-    -- let rib' = updates ++ (rib bmpState)
     let rib' = (rib bmpState) ++ updates
-    -- putStrLn $ "rIb size: " ++ show (length rib')
-    -- putMVar m bmpState{rib=rib'}
-    -- let ribsize' = length updates + (ribsize bmpState)
-    -- putStrLn $ "rIb size: " ++ show ribsize'
     putStrLn $ "rIb size: " ++ show (length rib')
-    putMVar m bmpState{rib=rib', ribsize=ribsize'}
+    putMVar m bmpState{rib=rib'}
 
 processBMPMsg m bmpMsg = print bmpMsg
 

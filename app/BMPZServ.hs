@@ -22,23 +22,30 @@ main = do
                  then getBMPStreamStdIn
                  else getBMPStreamInet (Text.Read.read (args !! 1) :: IP.IPv4)
 
-    zStream <- do (_,outputStream) <- if null args
-                                      then getZStreamUnix "/var/run/quagga/zserv.api"
-                                      else let s = head args
-                                           in maybe ( getZStreamUnix s )
-                                                    getZStreamInet
-                                                    ( Text.Read.readMaybe s :: Maybe IP.IPv4)
+    ( zStreamIn, ztreamOut ) <-
+        do (inputStream,outputStream) <-
+               if null args
+               then getZStreamUnix "/var/run/quagga/zserv.api"
+               else let s = head args
+               in maybe ( getZStreamUnix s )
+                        getZStreamInet
+                        ( Text.Read.readMaybe s :: Maybe IP.IPv4)
 
-                  zservRegister outputStream _ZEBRA_ROUTE_BGP
-                  return outputStream
+           zservRegister outputStream _ZEBRA_ROUTE_BGP
+           return (inputStream,outputStream)
 
-    loop bmpStream zStream where
+    loop bmpStream ztreamOut -- read BMP until EOF
+    zservReadLoop zStreamIn -- if EOF is seen then start monitoring zserv
+
+    where
+
     loop input output = do
         msg <- Streams.read input
         maybe (putStrLn "end of messages")
               ( \bmpMsg -> do processBMPMsg output bmpMsg
                               loop input output )
               msg
+
 
 --processBMPMsg :: MVar BMPState -> BMPMsg -> IO()
 processBMPMsg _ (BMPPeerUP msg@BMPPeerUPMsg{..}) = do
